@@ -265,10 +265,17 @@
       return;
     }
     const text = await file.text();
-    // clear the input so choosing the same file again still fires this change handler.
-    fileInput.value = "";
     setManifestText(formatToCurrent(text));
     findings = [{ severity: "ok", message: `Loaded ${file.name} - now click Validate.` }];
+  }
+
+  // clears the input right before the native picker opens, not after a file loads -
+  // otherwise the browser's own "chosen file" label snaps back to "No file chosen"
+  // right after a successful load, which reads as if nothing was selected. clearing
+  // here (rather than in handleChooseFile) still lets choosing the same file twice in
+  // a row fire another change event, since the value is already empty by then.
+  function handleFileInputClick(event: Event) {
+    (event.currentTarget as HTMLInputElement).value = "";
   }
 </script>
 
@@ -319,7 +326,13 @@
 
   <div class="file-row">
     <label for="file">Or load a JSON file:</label>
-    <input id="file" type="file" accept=".json,application/json" onchange={handleChooseFile} />
+    <input
+      id="file"
+      type="file"
+      accept=".json,application/json"
+      onclick={handleFileInputClick}
+      onchange={handleChooseFile}
+    />
   </div>
 
   <div class="actions">
