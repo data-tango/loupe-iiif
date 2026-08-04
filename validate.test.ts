@@ -24,7 +24,73 @@ function cleanManifest(): Record<string, unknown> {
         label: { en: ["Page 1"] },
         height: 100,
         width: 100,
-        items: [{ id: "https://example.org/page/1", type: "AnnotationPage" }],
+        items: [
+          {
+            id: "https://example.org/page/1",
+            type: "AnnotationPage",
+            items: [
+              {
+                id: "https://example.org/annotation/1",
+                type: "Annotation",
+                motivation: "painting",
+                target: "https://example.org/canvas/1",
+                body: {
+                  id: "https://example.org/image/1.jpg",
+                  type: "Image",
+                  format: "image/jpeg",
+                },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+// a Presentation 4.0 manifest that passes L2 and trips none of the L4 lint rules.
+// unlike v3, an item's target/motivation/type wiring is stricter (target is an object,
+// not a bare URI string; motivation is always an array) — see the v4 lint/tests below.
+function cleanManifestV4(): Record<string, unknown> {
+  return {
+    "@context": "http://iiif.io/api/presentation/4/context.json",
+    id: "https://example.org/manifest",
+    type: "Manifest",
+    label: { en: ["Clean v4 example"] },
+    summary: { en: ["A clean v4 example manifest."] },
+    metadata: [{ label: { en: ["Date"] }, value: { en: ["1900"] } }],
+    requiredStatement: {
+      label: { en: ["Attribution"] },
+      value: { en: ["Example Org"] },
+    },
+    items: [
+      {
+        id: "https://example.org/canvas/1",
+        type: "Canvas",
+        label: { en: ["Page 1"] },
+        height: 100,
+        width: 100,
+        items: [
+          {
+            id: "https://example.org/page/1",
+            type: "AnnotationPage",
+            items: [
+              {
+                id: "https://example.org/annotation/1",
+                type: "Annotation",
+                motivation: ["painting"],
+                target: { id: "https://example.org/canvas/1", type: "Canvas" },
+                body: {
+                  id: "https://example.org/image/1.jpg",
+                  type: "Image",
+                  format: "image/jpeg",
+                  height: 100,
+                  width: 100,
+                },
+              },
+            ],
+          },
+        ],
       },
     ],
   };
@@ -110,17 +176,33 @@ describe("layer 2 - IIIF structure", () => {
     expect(rootErrors[0].message).toContain("'id'");
   });
 
+  test("a malformed manifest id fails the schema's format: uri check", () => {
+    // starts with "http" (satisfies the id type's separate pattern check) but has an
+    // unencoded space, which format: "uri" rejects and a bare pattern check would not.
+    // proves ajv-formats is actually wired up: without it, Ajv silently skips
+    // format: "uri" and this manifest would incorrectly pass L2.
+    const manifest = { ...cleanManifest(), id: "http://example.org/not a valid uri" };
+    const findings = validate(JSON.stringify(manifest));
+    const idErrors = errors(findings).filter((finding) => finding.pointer === "/id");
+    expect(idErrors.length).toBeGreaterThan(0);
+  });
+
   test("a canvas without dimensions or duration collapses to one readable error", () => {
     const manifest = cleanManifest();
-    manifest.items = [{ id: "https://example.org/canvas/1", type: "Canvas" }];
+    const canvas = (manifest.items as Record<string, unknown>[])[0];
+    delete canvas.height;
+    delete canvas.width;
     const findings = validate(JSON.stringify(manifest));
     const canvasErrors = errors(findings).filter((finding) =>
       finding.pointer?.startsWith("/items/0"),
     );
     // Ajv's raw output is four errors (three required + one anyOf); the anyOf branch
-    // noise is collapsed into a single finding that names the alternatives.
+    // noise is collapsed into a single finding that names the alternatives. the
+    // official schema anyOfs width/height/duration as three separate one-property
+    // branches (a separate "dependencies" clause enforces width+height must co-occur),
+    // unlike the old hand-rolled schema's two-branch [height+width] or [duration].
     expect(canvasErrors).toHaveLength(1);
-    expect(canvasErrors[0].message).toContain("must have height + width, or duration");
+    expect(canvasErrors[0].message).toContain("must have width, or height, or duration");
   });
 
   test("L4 lint does not run when L2 fails", () => {
@@ -144,7 +226,7 @@ describe("layer 2 - IIIF structure", () => {
       (finding) => finding.pointer === "/@context",
     );
     expect(contextErrors).toHaveLength(1);
-    expect(contextErrors[0].message).toContain("Presentation 2.1 and 3.0");
+    expect(contextErrors[0].message).toContain("Presentation 2.1, 3.0, and 4.0");
   });
 
   test("a canvas id with a fragment is rejected", () => {
@@ -177,6 +259,10 @@ describe("layer 4 - best-practice lint", () => {
           type: "Canvas",
           height: 100,
           width: 100,
+          // present but empty: the official schema requires the "items" key on a
+          // Canvas but doesn't require it to be non-empty, so this still passes L2
+          // while tripping the L4 "no content" lint warning below.
+          items: [],
         },
       ],
     };
@@ -244,6 +330,57 @@ describe("layer 2 - IIIF Presentation 2.1 structure", () => {
     expect(messages.join("\n")).toContain("no thumbnail");
     expect(messages.join("\n")).toContain("no metadata");
     expect(messages.join("\n")).toContain("no license or attribution");
+    expect(messages.join("\n")).toContain("have no content");
+  });
+});
+
+describe("layer 2 - IIIF Presentation 4.0 structure", () => {
+  test("a clean Presentation 4 manifest passes L1 and L2 with no errors", () => {
+    const findings = validate(JSON.stringify(cleanManifestV4()));
+    expect(errors(findings)).toHaveLength(0);
+    const okLayers = findings
+      .filter((finding) => finding.severity === "ok")
+      .map((finding) => finding.layer);
+    expect(okLayers).toEqual([1, 2]);
+    expect(findings.find((finding) => finding.layer === 2)?.message).toContain(
+      "Presentation 4.0",
+    );
+  });
+
+  test("a v4 canvas without dimensions is a Layer 2 error", () => {
+    const manifest = cleanManifestV4();
+    const canvas = (manifest.items as Record<string, unknown>[])[0];
+    delete canvas.height;
+    delete canvas.width;
+    const findings = validate(JSON.stringify(manifest));
+    const canvasErrors = errors(findings).filter((finding) =>
+      finding.pointer?.startsWith("/items/0"),
+    );
+    expect(canvasErrors.length).toBeGreaterThan(0);
+  });
+
+  test("a v4 annotation target must be an object, not a bare URI string", () => {
+    const manifest = cleanManifestV4();
+    const canvas = (manifest.items as Record<string, unknown>[])[0];
+    const page = (canvas.items as Record<string, unknown>[])[0] as Record<string, unknown>;
+    const annotation = (page.items as Record<string, unknown>[])[0];
+    annotation.target = "https://example.org/canvas/1";
+    const findings = validate(JSON.stringify(manifest));
+    expect(errors(findings).length).toBeGreaterThan(0);
+  });
+
+  test("a v4 manifest with no content warns at L4", () => {
+    const manifest = cleanManifestV4();
+    const canvas = (manifest.items as Record<string, unknown>[])[0];
+    canvas.items = [];
+    delete manifest.summary;
+    delete manifest.metadata;
+    delete manifest.requiredStatement;
+    const findings = validate(JSON.stringify(manifest));
+    const messages = warnings(findings).map((finding) => finding.message);
+    expect(messages.join("\n")).toContain("no summary");
+    expect(messages.join("\n")).toContain("no metadata");
+    expect(messages.join("\n")).toContain("no requiredStatement");
     expect(messages.join("\n")).toContain("have no content");
   });
 });

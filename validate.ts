@@ -11,6 +11,9 @@ import {
   validateManifestV3,
   type ValidationError,
 } from "./manifest-validator.js";
+// v4's schema declares JSON Schema draft 2020-12, unlike v2/v3's draft-07, so it's
+// compiled by a separate Ajv instance into its own file (see build-validator.js).
+import { validateManifestV4 } from "./manifest-validator-v4.js";
 
 // the one shape the whole app agrees on: validation produces a list of findings,
 // and the UI is purely a rendering of that list.
@@ -60,8 +63,6 @@ export function validate(text: string): Finding[] {
   // layer 2: does the parsed manifest match a supported IIIF Presentation structure?
   // loupe-iiif only knows the IIIF Presentation API's shape, so it detects which version
   // a manifest declares (via @context) and validates against that version's schema.
-  // ponytail: v2 and v3 today; add a schema + detectPresentationVersion branch for v4
-  // once its context URI and structure are stable.
   const version = detectPresentationVersion(parsedManifest);
   if (version === "unknown") {
     findings.push({
@@ -69,7 +70,7 @@ export function validate(text: string): Finding[] {
       layer: 2,
       message:
         "Layer 2: could not detect a supported IIIF Presentation version from @context. " +
-        "loupe-iiif currently validates Presentation 2.1 and 3.0 (v4 draft support planned).",
+        "loupe-iiif currently validates Presentation 2.1, 3.0, and 4.0.",
       pointer: "/@context",
     });
     return findings;
@@ -78,13 +79,24 @@ export function validate(text: string): Finding[] {
   const { validateStructure, versionLabel, lint } = presentationVersions[version];
   const matchesSchema = validateStructure(parsedManifest);
   if (matchesSchema) {
-    findings.push({
-      severity: "ok",
-      layer: 2,
-      message: `Layer 2 passed - matches the IIIF Presentation ${versionLabel} structure.`,
-    });
-    // layer 4: best-practice lint only makes sense once the structure is valid.
-    findings.push(...lint(parsedManifest));
+    // the official v3/v4 schemas (see the comment on schemaV3 in build-validator.js)
+    // don't enforce two real IIIF spec rules that loupe-iiif's old hand-rolled schema
+    // used to catch: a Manifest needs at least one item, and a Canvas id must not carry
+    // a fragment (canvas ids get referenced with fragment-based selectors elsewhere, so
+    // the id itself must be bare). checked here rather than patched into the schema
+    // files, so an upstream schema update can't silently drop them again.
+    const structuralGaps = version === "3" || version === "4" ? checkStructuralGaps(parsedManifest) : [];
+    if (structuralGaps.length === 0) {
+      findings.push({
+        severity: "ok",
+        layer: 2,
+        message: `Layer 2 passed - matches the IIIF Presentation ${versionLabel} structure.`,
+      });
+      // layer 4: best-practice lint only makes sense once the structure is valid.
+      findings.push(...lint(parsedManifest));
+    } else {
+      findings.push(...structuralGaps);
+    }
   } else {
     for (const schemaError of collapseAnyOfNoise(validateStructure.errors ?? [])) {
       const location = schemaError.instancePath || "(root)";
@@ -100,7 +112,7 @@ export function validate(text: string): Finding[] {
   return findings;
 }
 
-type PresentationVersion = "2" | "3";
+type PresentationVersion = "2" | "3" | "4";
 
 // one entry per supported IIIF Presentation API version: which schema validates it,
 // what to call it in messages, and which best-practice lint rules apply.
@@ -112,10 +124,15 @@ const presentationVersions: Record<
     lint: (manifest: unknown) => Finding[];
   }
 > = {
+  "4": { validateStructure: validateManifestV4, versionLabel: "4.0", lint: lintBestPracticesV4 },
   "3": { validateStructure: validateManifestV3, versionLabel: "3.0", lint: lintBestPracticesV3 },
   "2": { validateStructure: validateManifestV2, versionLabel: "2.1", lint: lintBestPracticesV2 },
 };
 
+// Presentation 4 is still a draft upstream (this schema tracks the presentation-validator
+// project's current snapshot of it, not a finalized spec) - its shape may still change
+// before it's finalized, which could require updating iiif-presentation-4-schema/.
+const presentation4ContextUri = "http://iiif.io/api/presentation/4/context.json";
 const presentation3ContextUri = "http://iiif.io/api/presentation/3/context.json";
 // Presentation 2 and the legacy Shared Canvas context it grew out of are structurally
 // identical, and real institutions (e.g. the Smithsonian) still publish the latter.
@@ -134,6 +151,9 @@ function detectPresentationVersion(manifest: unknown): PresentationVersion | "un
   const context = manifest["@context"];
   const contextUris = typeof context === "string" ? [context] : Array.isArray(context) ? context : [];
 
+  if (contextUris.includes(presentation4ContextUri)) {
+    return "4";
+  }
   if (contextUris.includes(presentation3ContextUri)) {
     return "3";
   }
@@ -182,6 +202,38 @@ function collapseAnyOfNoise(errors: ValidationError[]): ValidationError[] {
       .join(", or ");
     return { ...error, message: `must have ${alternatives}` };
   });
+}
+
+// the two spec rules the official v3/v4 schemas don't check (see the caller for why).
+// message wording matches what Ajv itself generates for these keywords elsewhere, so a
+// gap-filled finding reads the same as a schema-generated one.
+function checkStructuralGaps(manifest: unknown): Finding[] {
+  const gaps: Finding[] = [];
+  if (!isRecord(manifest) || !Array.isArray(manifest.items)) {
+    return gaps;
+  }
+
+  if (manifest.items.length === 0) {
+    gaps.push({
+      severity: "error",
+      layer: 2,
+      message: "/items must NOT have fewer than 1 items",
+      pointer: "/items",
+    });
+  }
+
+  manifest.items.forEach((item, index) => {
+    if (isRecord(item) && item.type === "Canvas" && typeof item.id === "string" && item.id.includes("#")) {
+      gaps.push({
+        severity: "error",
+        layer: 2,
+        message: `/items/${index}/id must not have a fragment identifier ("#...")`,
+        pointer: `/items/${index}/id`,
+      });
+    }
+  });
+
+  return gaps;
 }
 
 // layer 4: things that are valid but not recommended by the IIIF spec. warnings, not
@@ -248,6 +300,70 @@ function lintBestPracticesV3(manifest: unknown): Finding[] {
       warnings.push(
         warn(
           `${withoutContent} canvas(es) have no content (items); each canvas should have at least one annotation page.`,
+        ),
+      );
+    }
+  }
+
+  return warnings;
+}
+
+// layer 4 for Presentation 4: the same spirit as lintBestPracticesV3, adapted to what
+// the v4 Manifest schema actually defines at the top level. unlike v3, the current draft
+// does not give Manifest its own thumbnail/rights/provider properties (those live on
+// Container, i.e. Canvas/Timeline/Scene) - warning on their absence here would be
+// flagging manifests for skipping fields the spec doesn't ask them to have, so those
+// checks are dropped rather than ported over. an item can be a Canvas, Timeline, or
+// Scene (v4 adds 3D), so items are called "item(s)", not "canvas(es)".
+function lintBestPracticesV4(manifest: unknown): Finding[] {
+  const warnings: Finding[] = [];
+  if (!isRecord(manifest)) {
+    return warnings;
+  }
+
+  if (typeof manifest.id === "string" && manifest.id.startsWith("http://")) {
+    warnings.push(warn("Manifest id uses http; https is recommended."));
+  }
+
+  if (isRecord(manifest.label) && "none" in manifest.label) {
+    warnings.push(
+      warn(
+        'Manifest label uses "none"; use a BCP-47 language code (e.g. "en") if the language is known.',
+      ),
+    );
+  }
+
+  if (manifest.summary === undefined) {
+    warnings.push(warn("Manifest has no summary; a short description is recommended."));
+  }
+
+  if (manifest.metadata === undefined) {
+    warnings.push(warn("Manifest has no metadata; descriptive metadata is recommended."));
+  }
+
+  if (manifest.requiredStatement === undefined) {
+    warnings.push(
+      warn(
+        "Manifest has no requiredStatement; consider adding licensing/attribution info (optional per spec).",
+      ),
+    );
+  }
+
+  if (Array.isArray(manifest.items)) {
+    const unlabeled = manifest.items.filter(
+      (item) => isRecord(item) && item.label === undefined,
+    ).length;
+    if (unlabeled > 0) {
+      warnings.push(warn(`${unlabeled} item(s) have no label; labels are recommended.`));
+    }
+
+    const withoutContent = manifest.items.filter(
+      (item) => isRecord(item) && (!Array.isArray(item.items) || item.items.length === 0),
+    ).length;
+    if (withoutContent > 0) {
+      warnings.push(
+        warn(
+          `${withoutContent} item(s) have no content (items); each Canvas/Timeline/Scene should have at least one annotation page.`,
         ),
       );
     }
@@ -324,15 +440,18 @@ function warn(message: string): Finding {
 }
 
 // content resources whose id should actually dereference. canvas/service/manifest-child
-// identifiers are deliberately excluded — in IIIF those need not resolve. covers both
-// Presentation 3's plain types and Presentation 2's DCMI "dctypes:" ones (e.g. a v2
-// canvas's images[].resource is a dctypes:Image nested inside an oa:Annotation).
+// identifiers are deliberately excluded — in IIIF those need not resolve. covers
+// Presentation 3's plain types, Presentation 2's DCMI "dctypes:" ones (e.g. a v2
+// canvas's images[].resource is a dctypes:Image nested inside an oa:Annotation), and
+// Presentation 4's renamed/added ones ("Audio" replaces "Sound"; "Model" is new, for 3D).
 // dctypes:Image/Sound/Text are named explicitly by the 2.0 spec; dctypes:MovingImage
 // isn't spec-mandated but is the de facto convention real AV manifests use.
 const contentResourceTypes = new Set([
   "Image",
   "Sound",
+  "Audio",
   "Video",
+  "Model",
   "Text",
   "Dataset",
   "dctypes:Image",

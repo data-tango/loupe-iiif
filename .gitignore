@@ -13,6 +13,7 @@ CLAUDE.md
 
 # generated
 manifest-validator.js
+manifest-validator-v4.js
 
 # store packages
 loupe-*.zip
