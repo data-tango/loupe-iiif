@@ -100,10 +100,11 @@ export function validate(text: string): Finding[] {
   } else {
     for (const schemaError of collapseAnyOfNoise(validateStructure.errors ?? [])) {
       const location = schemaError.instancePath || "(root)";
+      const rightsSchemeExplanation = explainRightsSchemeMismatch(schemaError, parsedManifest);
       findings.push({
         severity: "error",
         layer: 2,
-        message: `${location} ${schemaError.message ?? "is invalid"}`,
+        message: rightsSchemeExplanation ?? `${location} ${schemaError.message ?? "is invalid"}`,
         pointer: schemaError.instancePath,
       });
     }
@@ -234,6 +235,59 @@ function checkStructuralGaps(manifest: unknown): Finding[] {
   });
 
   return gaps;
+}
+
+// the official schema correctly requires the canonical http:// form for Creative Commons
+// and RightsStatements.org rights URIs - both vocabularies define http as the identifier
+// (their pages redirect to https for browsing, but the identifier itself must stay http
+// for RDF/linked-data interoperability - see IIIF/trc#32 and the CC license RDF wiki).
+// that's an easy mistake to make since https is the modern default everywhere else, so
+// this replaces Ajv's generic "must match exactly one schema in oneOf" with a message
+// that names the actual, correct fix instead of leaving someone to guess it.
+const httpOnlyRightsHosts = ["https://creativecommons.org/", "https://rightsstatements.org/"];
+
+function explainRightsSchemeMismatch(
+  schemaError: ValidationError,
+  manifest: unknown,
+): string | undefined {
+  if (schemaError.keyword !== "oneOf" || !schemaError.instancePath.endsWith("/rights")) {
+    return undefined;
+  }
+  const value = resolveJsonPointer(manifest, schemaError.instancePath);
+  const usesHttpOnlyHost =
+    typeof value === "string" && httpOnlyRightsHosts.some((host) => value.startsWith(host));
+  if (!usesHttpOnlyHost) {
+    return undefined;
+  }
+  const httpForm = (value as string).replace(/^https:\/\//, "http://");
+  return (
+    `${schemaError.instancePath} uses https, but Creative Commons and RightsStatements.org ` +
+    `define http as their canonical rights URI (their pages redirect to https for browsing, ` +
+    `but the identifier itself must stay http for machine-readable interoperability). ` +
+    `Use "${httpForm}" instead.`
+  );
+}
+
+// resolves a JSON Pointer (e.g. "/items/0/rights") against a parsed document.
+function resolveJsonPointer(document: unknown, pointer: string): unknown {
+  if (pointer === "") {
+    return document;
+  }
+  const segments = pointer
+    .split("/")
+    .slice(1)
+    .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"));
+  let current: unknown = document;
+  for (const segment of segments) {
+    if (Array.isArray(current)) {
+      current = current[Number(segment)];
+    } else if (isRecord(current)) {
+      current = current[segment];
+    } else {
+      return undefined;
+    }
+  }
+  return current;
 }
 
 // layer 4: things that are valid but not recommended by the IIIF spec. warnings, not

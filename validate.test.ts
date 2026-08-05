@@ -187,6 +187,44 @@ describe("layer 2 - IIIF structure", () => {
     expect(idErrors.length).toBeGreaterThan(0);
   });
 
+  test("an https Creative Commons rights URI gets a specific, actionable message", () => {
+    // creativecommons.org and rightsstatements.org define http as their canonical rights
+    // URI (their pages redirect to https for browsing, but the identifier itself must
+    // stay http for RDF/linked-data interoperability - see IIIF/trc#32). Ajv's raw
+    // message for this ("must match exactly one schema in oneOf") doesn't explain that,
+    // so it's replaced with one that does.
+    const manifest = {
+      ...cleanManifest(),
+      rights: "https://creativecommons.org/publicdomain/mark/1.0/",
+    };
+    const findings = validate(JSON.stringify(manifest));
+    const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
+    expect(rightsErrors).toHaveLength(1);
+    expect(rightsErrors[0].message).toContain("canonical rights URI");
+    expect(rightsErrors[0].message).toContain(
+      'Use "http://creativecommons.org/publicdomain/mark/1.0/" instead.',
+    );
+  });
+
+  test("an https RightsStatements.org URI gets the same specific message", () => {
+    const manifest = {
+      ...cleanManifest(),
+      rights: "https://rightsstatements.org/vocab/InC/1.0/",
+    };
+    const findings = validate(JSON.stringify(manifest));
+    const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
+    expect(rightsErrors).toHaveLength(1);
+    expect(rightsErrors[0].message).toContain('Use "http://rightsstatements.org/vocab/InC/1.0/" instead.');
+  });
+
+  test("an unrelated invalid rights URI still gets Ajv's generic message", () => {
+    const manifest = { ...cleanManifest(), rights: "https://example.org/not-a-real-license" };
+    const findings = validate(JSON.stringify(manifest));
+    const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
+    expect(rightsErrors).toHaveLength(1);
+    expect(rightsErrors[0].message).toContain("must match exactly one schema in oneOf");
+  });
+
   test("a canvas without dimensions or duration collapses to one readable error", () => {
     const manifest = cleanManifest();
     const canvas = (manifest.items as Record<string, unknown>[])[0];
