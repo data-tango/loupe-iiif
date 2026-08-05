@@ -18,8 +18,9 @@ export interface ValidationError {
   schemaPath: string;
   // the failed schema keyword, e.g. "required", "type", "anyOf".
   keyword: string;
-  // keyword-specific details; only missingProperty (from "required") is used here.
-  params?: { missingProperty?: string };
+  // keyword-specific details: missingProperty (from "required") and pattern (from
+  // "pattern") are the two used here, to build readable anyOf/oneOf branch messages.
+  params?: { missingProperty?: string; pattern?: string };
   message?: string;
 }
 

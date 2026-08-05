@@ -200,10 +200,8 @@ describe("layer 2 - IIIF structure", () => {
     const findings = validate(JSON.stringify(manifest));
     const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
     expect(rightsErrors).toHaveLength(1);
-    expect(rightsErrors[0].message).toContain("canonical rights URI");
-    expect(rightsErrors[0].message).toContain(
-      'Use "http://creativecommons.org/publicdomain/mark/1.0/" instead.',
-    );
+    expect(rightsErrors[0].message).toContain("use http instead of https");
+    expect(rightsErrors[0].message).toContain('Use "http://creativecommons.org/publicdomain/mark/1.0/".');
   });
 
   test("an https RightsStatements.org URI gets the same specific message", () => {
@@ -214,15 +212,57 @@ describe("layer 2 - IIIF structure", () => {
     const findings = validate(JSON.stringify(manifest));
     const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
     expect(rightsErrors).toHaveLength(1);
-    expect(rightsErrors[0].message).toContain('Use "http://rightsstatements.org/vocab/InC/1.0/" instead.');
+    expect(rightsErrors[0].message).toContain('Use "http://rightsstatements.org/vocab/InC/1.0/".');
   });
 
-  test("an unrelated invalid rights URI still gets Ajv's generic message", () => {
+  test("a RightsStatements.org /page/ browsing URL gets rewritten to the /vocab/ identifier", () => {
+    // rightsstatements.org's own site hands out /page/{id}/{version}/ links (often with a
+    // ?language= query param), which is a different path from the canonical /vocab/
+    // identifier - a plain scheme swap alone would not have fixed this.
+    const manifest = {
+      ...cleanManifest(),
+      rights: "https://rightsstatements.org/page/InC-NC/1.0/?language=en",
+    };
+    const findings = validate(JSON.stringify(manifest));
+    const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
+    expect(rightsErrors).toHaveLength(1);
+    expect(rightsErrors[0].message).toContain("canonical rights URI");
+    expect(rightsErrors[0].message).toContain('Use "http://rightsstatements.org/vocab/InC-NC/1.0/".');
+  });
+
+  test("a /vocab/ URI with a stray query string is also fixed, via the same generic message", () => {
+    const manifest = {
+      ...cleanManifest(),
+      rights: "https://rightsstatements.org/vocab/InC/1.0/?language=en",
+    };
+    const findings = validate(JSON.stringify(manifest));
+    const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
+    expect(rightsErrors).toHaveLength(1);
+    expect(rightsErrors[0].message).toContain("canonical rights URI");
+    expect(rightsErrors[0].message).toContain('Use "http://rightsstatements.org/vocab/InC/1.0/".');
+  });
+
+  test("an unrelated invalid rights URI falls back to the collapsed pattern list", () => {
     const manifest = { ...cleanManifest(), rights: "https://example.org/not-a-real-license" };
     const findings = validate(JSON.stringify(manifest));
     const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
     expect(rightsErrors).toHaveLength(1);
-    expect(rightsErrors[0].message).toContain("must match exactly one schema in oneOf");
+    expect(rightsErrors[0].message).toContain("must match one of these:");
+    expect(rightsErrors[0].message).toContain("http://creativecommons.org/licenses/.*");
+  });
+
+  test("an invalid viewingDirection also gets a collapsed pattern list instead of Ajv's raw oneOf noise", () => {
+    // proves the collapsing generalizes beyond /rights - viewingDirection is a separate
+    // pattern-only anyOf field with no special-cased handling of its own.
+    const manifest = { ...cleanManifest(), viewingDirection: "sideways" };
+    const findings = validate(JSON.stringify(manifest));
+    const directionErrors = errors(findings).filter(
+      (finding) => finding.pointer === "/viewingDirection",
+    );
+    expect(directionErrors).toHaveLength(1);
+    expect(directionErrors[0].message).toBe(
+      "/viewingDirection must match one of these: left-to-right, right-to-left, top-to-bottom, bottom-to-top",
+    );
   });
 
   test("a canvas without dimensions or duration collapses to one readable error", () => {

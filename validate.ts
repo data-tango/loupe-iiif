@@ -166,9 +166,12 @@ function detectPresentationVersion(manifest: unknown): PresentationVersion | "un
 
 // Ajv reports an anyOf/oneOf failure as every branch's individual errors plus a generic
 // "must match a schema in anyOf" — so one canvas missing its dimensions becomes four
-// findings. drop the branch errors and, where the branches were required-property
-// alternatives, spell them out in the surviving error (e.g. "must have height + width,
-// or duration").
+// findings. drop the branch errors and, where the branches share a readable shape, spell
+// them out in the surviving error instead: required-property alternatives become
+// "must have height + width, or duration"; pattern alternatives (regex-based enums like
+// viewingDirection, or URI prefixes like rights) become "must match one of: ...". a schema
+// with more than a couple of pattern-only oneOf/anyOf fields probably means this file's
+// worth generalizing further rather than one-off handling each field.
 const branchKeywordPattern = /\/(anyOf|oneOf)\//;
 
 function collapseAnyOfNoise(errors: ValidationError[]): ValidationError[] {
@@ -179,12 +182,14 @@ function collapseAnyOfNoise(errors: ValidationError[]): ValidationError[] {
     if (error.keyword !== "anyOf" && error.keyword !== "oneOf") {
       return error;
     }
-    // group the dropped errors' missing properties by which alternative they belong to.
+    const branchesForThisError = branchErrors.filter(
+      (branch) => branch.instancePath === error.instancePath,
+    );
+
+    // required-property alternatives, grouped by which branch they belong to (a branch
+    // with two required properties, e.g. height + width, should read as one alternative).
     const missingByBranch = new Map<string, string[]>();
-    for (const branch of branchErrors) {
-      if (branch.instancePath !== error.instancePath) {
-        continue;
-      }
+    for (const branch of branchesForThisError) {
       const branchIndex = branch.schemaPath.match(/\/(?:anyOf|oneOf)\/(\d+)\//)?.[1];
       const missingProperty = branch.params?.missingProperty;
       if (branchIndex === undefined || missingProperty === undefined) {
@@ -195,13 +200,24 @@ function collapseAnyOfNoise(errors: ValidationError[]): ValidationError[] {
         missingProperty,
       ]);
     }
-    if (missingByBranch.size === 0) {
-      return error;
+    if (missingByBranch.size > 0) {
+      const alternatives = [...missingByBranch.values()]
+        .map((properties) => properties.join(" + "))
+        .join(", or ");
+      return { ...error, message: `must have ${alternatives}` };
     }
-    const alternatives = [...missingByBranch.values()]
-      .map((properties) => properties.join(" + "))
-      .join(", or ");
-    return { ...error, message: `must have ${alternatives}` };
+
+    // pattern alternatives - each branch is a single regex the value could have matched.
+    // strip a bare ^...$ anchor pair (regex-flavored enums like "^left-to-right$") so
+    // those read as plain values; a partial pattern like a URI prefix is left as-is.
+    const patterns = branchesForThisError
+      .filter((branch) => branch.keyword === "pattern" && branch.params?.pattern !== undefined)
+      .map((branch) => (branch.params?.pattern as string).replace(/^\^(.*)\$$/, "$1"));
+    if (patterns.length > 0) {
+      return { ...error, message: `must match one of these: ${patterns.join(", ")}` };
+    }
+
+    return error;
   });
 }
 
@@ -246,6 +262,31 @@ function checkStructuralGaps(manifest: unknown): Finding[] {
 // that names the actual, correct fix instead of leaving someone to guess it.
 const httpOnlyRightsHosts = ["https://creativecommons.org/", "https://rightsstatements.org/"];
 
+// RightsStatements.org's human-facing pages live at /page/{id}/{version}/ (often with a
+// ?language= query param from their site's own language switcher) - a different path
+// from the canonical machine identifier at /vocab/{id}/{version}/. copying a link
+// straight from their website is probably the single most common way to end up with a
+// rights value that's wrong in more than just its scheme, so a plain scheme swap isn't
+// enough to fix it - the path needs rewriting too.
+const rightsStatementsPagePattern =
+  /^https?:\/\/rightsstatements\.org\/page\/([^/?#]+)\/([^/?#]+)\/?(?:[?#].*)?$/;
+
+// computes the canonical rights URI for a value that's wrong in a way loupe-iiif knows
+// how to fix, or undefined if it isn't one of those known cases.
+function canonicalizeRightsValue(value: string): string | undefined {
+  const pageMatch = value.match(rightsStatementsPagePattern);
+  if (pageMatch) {
+    const [, id, version] = pageMatch;
+    return `http://rightsstatements.org/vocab/${id}/${version}/`;
+  }
+  if (!httpOnlyRightsHosts.some((host) => value.startsWith(host))) {
+    return undefined;
+  }
+  // scheme swap, plus drop a stray query string/fragment (e.g. a copied "?language=en")
+  // that isn't part of the canonical identifier either.
+  return value.replace(/^https:\/\//, "http://").replace(/[?#].*$/, "");
+}
+
 function explainRightsSchemeMismatch(
   schemaError: ValidationError,
   manifest: unknown,
@@ -254,18 +295,20 @@ function explainRightsSchemeMismatch(
     return undefined;
   }
   const value = resolveJsonPointer(manifest, schemaError.instancePath);
-  const usesHttpOnlyHost =
-    typeof value === "string" && httpOnlyRightsHosts.some((host) => value.startsWith(host));
-  if (!usesHttpOnlyHost) {
+  if (typeof value !== "string") {
     return undefined;
   }
-  const httpForm = (value as string).replace(/^https:\/\//, "http://");
-  return (
-    `${schemaError.instancePath} uses https, but Creative Commons and RightsStatements.org ` +
-    `define http as their canonical rights URI (their pages redirect to https for browsing, ` +
-    `but the identifier itself must stay http for machine-readable interoperability). ` +
-    `Use "${httpForm}" instead.`
-  );
+  const canonical = canonicalizeRightsValue(value);
+  if (canonical === undefined) {
+    return undefined;
+  }
+  // the sharp, single-cause message for the common case; a generic one for everything
+  // else canonicalizeRightsValue can fix (a /page/ rewrite, a stray query string, or
+  // both), rather than a message variant per specific thing that changed.
+  const isSchemeOnlyFix = canonical === value.replace(/^https:\/\//, "http://");
+  return isSchemeOnlyFix
+    ? `use http instead of https. Use "${canonical}".`
+    : `use the canonical rights URI. Use "${canonical}".`;
 }
 
 // resolves a JSON Pointer (e.g. "/items/0/rights") against a parsed document.
