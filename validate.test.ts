@@ -200,7 +200,7 @@ describe("layer 2 - IIIF structure", () => {
     const findings = validate(JSON.stringify(manifest));
     const rightsErrors = errors(findings).filter((finding) => finding.pointer === "/rights");
     expect(rightsErrors).toHaveLength(1);
-    expect(rightsErrors[0].message).toContain("use http instead of https");
+    expect(rightsErrors[0].message).toContain("Use 'http' instead of 'https'");
     expect(rightsErrors[0].message).toContain('Use "http://creativecommons.org/publicdomain/mark/1.0/".');
   });
 

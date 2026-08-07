@@ -307,8 +307,8 @@ function explainRightsSchemeMismatch(
   // both), rather than a message variant per specific thing that changed.
   const isSchemeOnlyFix = canonical === value.replace(/^https:\/\//, "http://");
   return isSchemeOnlyFix
-    ? `use http instead of https. Use "${canonical}".`
-    : `use the canonical rights URI. Use "${canonical}".`;
+    ? `Use 'http' instead of 'https'. Use "${canonical}".`
+    : `Use the canonical rights URI. Use "${canonical}".`;
 }
 
 // resolves a JSON Pointer (e.g. "/items/0/rights") against a parsed document.
