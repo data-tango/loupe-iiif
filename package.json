@@ -19,7 +19,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/datatango/loupe-iiif.git"
+    "url": "git+https://github.com/data-tango/loupe-iiif.git"
   },
   "keywords": [],
   "author": "",
@@ -29,9 +29,9 @@
     "node": ">=22"
   },
   "bugs": {
-    "url": "https://github.com/datatango/loupe-iiif/issues"
+    "url": "https://github.com/data-tango/loupe-iiif/issues"
   },
-  "homepage": "https://github.com/datatango/loupe-iiif#readme",
+  "homepage": "https://github.com/data-tango/loupe-iiif#readme",
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.1.2",
     "svelte": "^5.56.4",
