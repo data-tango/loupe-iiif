@@ -440,18 +440,20 @@
     align-items: baseline;
     gap: 10px;
     padding: 16px 24px;
-    border-bottom: 1px solid #ddd;
+    /* the darker blue, not --iiif-blue: white 13px text needs the extra contrast
+       (≈5:1 against #006297, ≈4:1 against #0073b0). */
+    background: var(--iiif-blue-dark);
   }
   header h1 {
     margin: 0;
     font-family: "Playfair Display", serif;
     font-size: 26px;
     font-weight: 700;
-    color: var(--iiif-blue);
+    color: #fff;
   }
   header span {
     font-size: 13px;
-    color: var(--iiif-gray);
+    color: rgba(255, 255, 255, 0.9);
   }
   main {
     padding: 24px;
@@ -463,6 +465,9 @@
     border: 1px solid #ccc;
     border-radius: 4px;
     overflow: hidden;
+    /* CodeMirror's own surface is transparent, so it would otherwise take the page's
+       off-white; keep the editor a white card against it. */
+    background: #fff;
   }
   /* help button + hover/focus popover, pushed to the right of the header. the
      margin-right centers the 24px icon above the Load button below it (measured:
@@ -483,12 +488,12 @@
     padding: 0;
     border: 0;
     background: none;
-    color: var(--iiif-blue);
+    color: #fff;
     cursor: pointer;
   }
   .help-button:hover {
     background: none;
-    color: var(--iiif-blue-dark);
+    color: rgba(255, 255, 255, 0.75);
   }
   .icon {
     width: 14px;
@@ -721,6 +726,10 @@
     border-radius: 4px;
     font-family: "Courier Prime", monospace;
     font-size: 13px;
+    /* a long URL has no break opportunities, so its min-content width would otherwise
+       push the text past the box. "anywhere" (not "break-word") is the one that also
+       shrinks min-content, which is what keeps the flex row from overflowing. */
+    overflow-wrap: anywhere;
   }
   .finding.error {
     background: #fdecef;
