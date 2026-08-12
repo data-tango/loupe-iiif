@@ -526,5 +526,89 @@ describe("validateLinks", () => {
     expect(failedIndexes).toEqual([...failedIndexes].sort((a, b) => a - b));
   });
 
+  test("a timed-out URL is a warning, while a refused connection stays an error", async () => {
+    const manifest = {
+      "@context": "http://iiif.io/api/presentation/3/context.json",
+      id: "https://example.org/manifest",
+      type: "Manifest",
+      label: { en: ["Slow"] },
+      thumbnail: [
+        { id: "https://example.org/slow", type: "Image" },
+        { id: "https://example.org/refused", type: "Image" },
+      ],
+    };
 
+    vi.stubGlobal("fetch", async (url: string) => {
+      if (url.endsWith("/slow")) {
+        throw new DOMException("signal timed out", "TimeoutError");
+      }
+      if (url.endsWith("/refused")) {
+        throw new TypeError("Failed to fetch");
+      }
+      return { ok: true, status: 200, statusText: "OK", url, redirected: false, body: null, headers: new Headers() };
+    });
+
+    const findings = await validateLinks(JSON.stringify(manifest));
+    vi.unstubAllGlobals();
+
+    expect(findings[0].severity).toBe("error");
+    expect(findings[0].message).toContain("1 of 3 resource(s) failed to resolve, 1 could not be checked");
+    const bySeverity = Object.fromEntries(
+      findings.slice(1).map((finding) => [finding.severity, finding.message]),
+    );
+    expect(bySeverity.warning).toContain("Could not check (timed out after 10s)");
+    expect(bySeverity.error).toContain("Unreachable (Failed to fetch)");
+  });
+
+  test("a URL answered by a bot-protection challenge is a warning, not a pass", async () => {
+    const manifest = {
+      "@context": "http://iiif.io/api/presentation/3/context.json",
+      id: "https://example.org/manifest",
+      type: "Manifest",
+      label: { en: ["Protected"] },
+      thumbnail: [
+        { id: "https://example.org/challenged", type: "Image" },
+        { id: "https://example.org/redirected", type: "Image" },
+      ],
+    };
+
+    vi.stubGlobal("fetch", async (url: string) => {
+      // a Cloudflare managed challenge: 200, but served by Cloudflare, not the origin
+      if (url.endsWith("/challenged")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url,
+          body: null,
+          headers: new Headers({ "cf-mitigated": "challenge" }),
+        };
+      }
+      // a redirect into an interstitial: ok and 200, but not where we asked to go
+      if (url.endsWith("/redirected")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          url: "https://example.org/vufind/Turnstile/Challenge?context=abc",
+          redirected: true,
+          body: null,
+          headers: new Headers(),
+        };
+      }
+      return { ok: true, status: 200, statusText: "OK", url, body: null, headers: new Headers() };
+    });
+
+    const findings = await validateLinks(JSON.stringify(manifest));
+    vi.unstubAllGlobals();
+
+    expect(findings[0].severity).toBe("warning");
+    expect(findings[0].message).toContain("1 of 3 resource(s) resolved, 2 could not be checked");
+    expect(findings.slice(1).map((finding) => finding.severity)).toEqual([
+      "warning",
+      "warning",
+    ]);
+    expect(findings[1].message).toContain("Could not check (bot-protection)");
+    expect(findings[2].message).toContain("Could not check (bot-protection)");
+  });
 });

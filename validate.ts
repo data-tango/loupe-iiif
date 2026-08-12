@@ -619,14 +619,52 @@ function collectResourceUrls(manifest: unknown): {
   return { urlToPointer, referenceCount };
 }
 
+// bot-protection interstitials answer for the origin, not for the resource: a Cloudflare
+// challenge returns its own 200 (or a 403/503) whether or not the target exists, so the
+// response proves nothing either way. detected here so those URLs can be reported as
+// warnings — "could not be checked" — instead of passes or dead links.
+function isBotProtected(response: Response): boolean {
+  // Cloudflare sets this on every response it served in place of the origin's.
+  if (response.headers.get("cf-mitigated") === "challenge") {
+    return true;
+  }
+  // Cloudflare's own interstitial path, which no real resource uses.
+  if (/cdn-cgi\/challenge-platform/i.test(response.url)) {
+    return true;
+  }
+  // a redirect into an interstitial: the request ended somewhere other than the URL
+  // asked for, at a path that names the challenge. the redirect matters — a resource
+  // URL may legitimately contain "challenge" (a digitized item by that title), but
+  // one we were sent to instead of the resource is a different thing.
+  if (response.redirected && /turnstile|captcha|challenge/i.test(response.url)) {
+    return true;
+  }
+  return (
+    (response.status === 403 || response.status === 503) &&
+    response.headers.get("server") === "cloudflare"
+  );
+}
+
 // returns a finding on failure, undefined on success. the pointer locates the id that
 // referenced this URL, so the UI can mark and jump to dead links like schema errors.
 async function checkUrl(url: string, pointer: string): Promise<Finding | undefined> {
   try {
+    // GET, not HEAD: measured against a live IIIF image server (uchicago's Cantaloupe),
+    // HEAD on a /full/max derivative took ~5.1s against ~0.4s for the same GET — image
+    // servers optimise the path they actually serve. cancelling the body below means a
+    // GET costs headers only anyway.
     const response = await fetch(url, { signal: AbortSignal.timeout(10_000) });
     // the status line is all we need — cancel the body so the browser doesn't
     // download entire images/videos just to prove they exist.
     void response.body?.cancel();
+    if (isBotProtected(response)) {
+      return {
+        severity: "warning",
+        layer: 3,
+        message: `Could not check (bot-protection) - ${url}`,
+        pointer,
+      };
+    }
     if (!response.ok) {
       return {
         severity: "error",
@@ -637,12 +675,19 @@ async function checkUrl(url: string, pointer: string): Promise<Finding | undefin
     }
     return undefined;
   } catch (error) {
-    const timedOut = error instanceof DOMException && error.name === "TimeoutError";
-    const reason = timedOut
-      ? "timed out after 10s"
-      : error instanceof Error
-        ? error.message
-        : String(error);
+    // a timeout is not evidence of a dead link — a IIIF image server rendering a
+    // /full/max derivative for the first time can outlast the budget and serve the
+    // same URL fine on the next run. it joins the bot-protected URLs as "could not
+    // be checked" rather than being reported as broken.
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return {
+        severity: "warning",
+        layer: 3,
+        message: `Could not check (timed out after 10s) - ${url}`,
+        pointer,
+      };
+    }
+    const reason = error instanceof Error ? error.message : String(error);
     return {
       severity: "error",
       layer: 3,
@@ -704,18 +749,35 @@ export async function validateLinks(
     ];
   }
 
-  const failures = await checkUrlsWithPool([...urlToPointer.entries()], onProgress);
+  const problems = await checkUrlsWithPool([...urlToPointer.entries()], onProgress);
+  const deadLinks = problems.filter((finding) => finding.severity === "error");
+  const unchecked = problems.filter((finding) => finding.severity === "warning");
 
   const duplicateNote =
     referenceCount > urlToPointer.size ? ` (deduped from ${referenceCount} references)` : "";
+  // bot-protected URLs are neither passes nor failures, so they get their own clause
+  // rather than being folded into either count.
+  const uncheckedNote =
+    unchecked.length > 0 ? `, ${unchecked.length} could not be checked` : "";
+
+  let summaryMessage: string;
+  let summarySeverity: Severity;
+  if (deadLinks.length > 0) {
+    summarySeverity = "error";
+    summaryMessage = `Layer 3: ${deadLinks.length} of ${urlToPointer.size} resource(s) failed to resolve${uncheckedNote}${duplicateNote}.`;
+  } else if (unchecked.length > 0) {
+    summarySeverity = "warning";
+    summaryMessage = `Layer 3: ${urlToPointer.size - unchecked.length} of ${urlToPointer.size} resource(s) resolved, ${unchecked.length} could not be checked${duplicateNote}.`;
+  } else {
+    summarySeverity = "ok";
+    summaryMessage = `Layer 3 passed - all ${urlToPointer.size} resource(s) resolved${duplicateNote}.`;
+  }
+
   const summary: Finding = {
-    severity: failures.length > 0 ? "error" : "ok",
+    severity: summarySeverity,
     layer: 3,
-    message:
-      failures.length > 0
-        ? `Layer 3: ${failures.length} of ${urlToPointer.size} resource(s) failed to resolve${duplicateNote}.`
-        : `Layer 3 passed - all ${urlToPointer.size} resource(s) resolved${duplicateNote}.`,
+    message: summaryMessage,
   };
 
-  return [summary, ...failures];
+  return [summary, ...problems];
 }
