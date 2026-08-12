@@ -15,6 +15,9 @@
   // true while a fetch is in flight (Load / Check Links). guards against overlapping
   // runs racing to overwrite findings, and disables the action buttons meanwhile.
   let busy = $state(false);
+  // set while Layer 3 fetches are running, so the report can show a progress bar;
+  // undefined the rest of the time.
+  let linkProgress = $state<{ completed: number; total: number } | undefined>(undefined);
 
   const countBySeverity = (severity: Severity) =>
     findings.filter((finding) => finding.severity === severity).length;
@@ -141,12 +144,18 @@
     try {
       editorView?.dispatch({ effects: setMarkers.of([]) });
       findings = [{ severity: "ok", layer: 3, message: "Checking links…" }];
-      findings = await validateLinks(manifestText);
+      findings = await validateLinks(manifestText, (completed, total) => {
+        linkProgress = { completed, total };
+        findings = [
+          { severity: "ok", layer: 3, message: `Checking links… ${completed} of ${total}` },
+        ];
+      });
       editorView?.dispatch({
         effects: setMarkers.of(computeMarkerRanges(findings, manifestText)),
       });
     } finally {
       busy = false;
+      linkProgress = undefined;
     }
   }
 
@@ -378,6 +387,13 @@
 
     <!-- polite live region so screen readers announce new findings without interrupting -->
     <div class="report" aria-live="polite">
+      {#if linkProgress !== undefined}
+        <progress
+          class="link-progress"
+          value={linkProgress.completed}
+          max={linkProgress.total}
+        ></progress>
+      {/if}
       {#if findings.length > 0}
         <div class="report-summary">
           <span class="error">{@render severityIcon("error")} {errorCount}</span>
@@ -524,6 +540,29 @@
     top: 16px;
     max-height: 70vh;
     overflow: auto;
+  }
+  /* native <progress>, restyled: WebKit and Firefox expose different pseudo-elements,
+     so the bar and its fill are set for both. */
+  .link-progress {
+    width: 100%;
+    height: 6px;
+    margin-bottom: 8px;
+    border: none;
+    border-radius: 3px;
+    background: #eee;
+    appearance: none;
+  }
+  .link-progress::-webkit-progress-bar {
+    border-radius: 3px;
+    background: #eee;
+  }
+  .link-progress::-webkit-progress-value {
+    border-radius: 3px;
+    background: var(--iiif-green);
+  }
+  .link-progress::-moz-progress-bar {
+    border-radius: 3px;
+    background: var(--iiif-green);
   }
   .report-summary {
     display: flex;

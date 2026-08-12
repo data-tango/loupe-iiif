@@ -1,7 +1,7 @@
 // locks down the validate() contract: text in, Finding[] out, layered L1/L2/L4.
 // run with `npm test` (the pretest hook regenerates manifest-validator.js first).
-import { describe, expect, test } from "vitest";
-import { validate, type Finding } from "./validate";
+import { describe, expect, test, vi } from "vitest";
+import { validate, validateLinks, type Finding } from "./validate";
 
 // a manifest that passes L2 and trips none of the L4 lint rules.
 function cleanManifest(): Record<string, unknown> {
@@ -461,4 +461,70 @@ describe("layer 2 - IIIF Presentation 4.0 structure", () => {
     expect(messages.join("\n")).toContain("no requiredStatement");
     expect(messages.join("\n")).toContain("have no content");
   });
+});
+
+// layer 3 checks every URL, but the pool must keep requests in flight bounded and
+// still report failures in manifest order.
+describe("validateLinks", () => {
+  test("checks all URLs with at most 8 in flight, in manifest order", async () => {
+    const imageCount = 30;
+    const manifest = {
+      "@context": "http://iiif.io/api/presentation/3/context.json",
+      id: "https://example.org/manifest",
+      type: "Manifest",
+      label: { en: ["Many images"] },
+      thumbnail: [
+        ...Array.from({ length: imageCount }, (_unused, index) => ({
+          id: `https://example.org/image/${index}`,
+          type: "Image",
+        })),
+        // two repeats of an already-listed image: fetched once, counted as references
+        { id: "https://example.org/image/0", type: "Image" },
+        { id: "https://example.org/image/1", type: "Image" },
+      ],
+    };
+
+    let inFlight = 0;
+    let peakInFlight = 0;
+    const requested: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      requested.push(url);
+      inFlight += 1;
+      peakInFlight = Math.max(peakInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      // every third canvas is a dead link
+      const index = Number(url.split("/").pop());
+      return {
+        ok: index % 3 !== 0,
+        status: 404,
+        statusText: "Not Found",
+        url,
+        body: null,
+        headers: new Headers(),
+      };
+    });
+
+    const progressUpdates: number[] = [];
+    const findings = await validateLinks(JSON.stringify(manifest), (completed, total) => {
+      expect(total).toBe(imageCount + 1);
+      progressUpdates.push(completed);
+    });
+    vi.unstubAllGlobals();
+
+    expect(requested.length).toBe(imageCount + 1); // unique images + the manifest id
+    expect(peakInFlight).toBeLessThanOrEqual(8);
+    expect(progressUpdates).toEqual(
+      Array.from({ length: imageCount + 1 }, (_unused, index) => index + 1),
+    );
+    expect(findings[0].message).toContain(`of ${imageCount + 1} resource(s) failed`);
+    expect(findings[0].message).toContain(`deduped from ${imageCount + 3} references`);
+
+    const failedIndexes = findings
+      .slice(1)
+      .map((finding) => Number(finding.message.split("/").pop()));
+    expect(failedIndexes).toEqual([...failedIndexes].sort((a, b) => a - b));
+  });
+
+
 });

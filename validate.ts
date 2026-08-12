@@ -575,8 +575,14 @@ function escapePointerSegment(segment: string | number): string {
 // so a dead link can be marked and jumped to in the editor. deduped (first wins).
 // checks both Presentation 3's "id"/"type" and Presentation 2's "@id"/"@type", since
 // this walk runs on manifests of either version.
-function collectResourceUrls(manifest: unknown): Map<string, string> {
+// referenceCount counts every id that pointed at a URL, so the caller can say how many
+// references the deduped set came from.
+function collectResourceUrls(manifest: unknown): {
+  urlToPointer: Map<string, string>;
+  referenceCount: number;
+} {
   const urlToPointer = new Map<string, string>();
+  let referenceCount = 0;
 
   function walk(value: unknown, path: (string | number)[]): void {
     if (Array.isArray(value)) {
@@ -593,13 +599,16 @@ function collectResourceUrls(manifest: unknown): Map<string, string> {
     if (
       (isContentResource || isManifestRoot) &&
       idKey !== undefined &&
-      isHttpUrl(value[idKey] as string) &&
-      !urlToPointer.has(value[idKey] as string)
+      isHttpUrl(value[idKey] as string)
     ) {
-      const pointer = [...path, idKey]
-        .map((segment) => "/" + escapePointerSegment(segment))
-        .join("");
-      urlToPointer.set(value[idKey] as string, pointer);
+      const url = value[idKey] as string;
+      referenceCount += 1;
+      if (!urlToPointer.has(url)) {
+        const pointer = [...path, idKey]
+          .map((segment) => "/" + escapePointerSegment(segment))
+          .join("");
+        urlToPointer.set(url, pointer);
+      }
     }
     for (const key of Object.keys(value)) {
       walk(value[key], [...path, key]);
@@ -607,7 +616,7 @@ function collectResourceUrls(manifest: unknown): Map<string, string> {
   }
   walk(manifest, []);
 
-  return urlToPointer;
+  return { urlToPointer, referenceCount };
 }
 
 // returns a finding on failure, undefined on success. the pointer locates the id that
@@ -643,10 +652,44 @@ async function checkUrl(url: string, pointer: string): Promise<Finding | undefin
   }
 }
 
+// checks every URL, but with a fixed number of requests in flight so a large manifest
+// doesn't hit one host with hundreds of parallel fetches and collect rate-limit errors
+// that look like dead links. workers pull from a shared cursor until the list runs out.
+// ponytail: 8 is a guess that behaves politely; tune if checks feel slow.
+async function checkUrlsWithPool(
+  entries: [string, string][],
+  onProgress?: (completed: number, total: number) => void,
+  concurrency = 8,
+): Promise<Finding[]> {
+  // results are stored by position, not appended, so findings stay in manifest order
+  // however the workers happen to interleave.
+  const results: (Finding | undefined)[] = new Array(entries.length);
+  let nextIndex = 0;
+  let completed = 0;
+
+  async function worker() {
+    while (nextIndex < entries.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const [url, pointer] = entries[index];
+      results[index] = await checkUrl(url, pointer);
+      completed += 1;
+      onProgress?.(completed, entries.length);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, entries.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results.filter((finding): finding is Finding => finding !== undefined);
+}
+
 // layer 3: do the URLs the manifest references actually resolve? this is the extension's
 // edge — host_permissions let it fetch cross-origin. network-bound, so it is async and a
 // separate action rather than part of the sync validate().
-export async function validateLinks(text: string): Promise<Finding[]> {
+export async function validateLinks(
+  text: string,
+  onProgress?: (completed: number, total: number) => void,
+): Promise<Finding[]> {
   let manifest: unknown;
   try {
     manifest = JSON.parse(text);
@@ -654,27 +697,24 @@ export async function validateLinks(text: string): Promise<Finding[]> {
     return [{ severity: "error", layer: 1, message: "Invalid JSON - fix Layer 1 first." }];
   }
 
-  const urls = collectResourceUrls(manifest);
-  if (urls.size === 0) {
+  const { urlToPointer, referenceCount } = collectResourceUrls(manifest);
+  if (urlToPointer.size === 0) {
     return [
       { severity: "ok", layer: 3, message: "Layer 3: no resolvable resource URLs found." },
     ];
   }
 
-  // ponytail: cap requests so a huge manifest can't fire hundreds at once; the summary
-  // reports how many of the total were actually checked. raise if it proves too low.
-  const maxUrls = 25;
-  const checked = [...urls.entries()].slice(0, maxUrls);
-  const results = await Promise.all(checked.map(([url, pointer]) => checkUrl(url, pointer)));
-  const failures = results.filter((finding): finding is Finding => finding !== undefined);
+  const failures = await checkUrlsWithPool([...urlToPointer.entries()], onProgress);
 
+  const duplicateNote =
+    referenceCount > urlToPointer.size ? ` (deduped from ${referenceCount} references)` : "";
   const summary: Finding = {
     severity: failures.length > 0 ? "error" : "ok",
     layer: 3,
     message:
       failures.length > 0
-        ? `Layer 3: ${failures.length} of ${checked.length} checked failed (of ${urls.size} found).`
-        : `Layer 3 passed - ${checked.length} of ${urls.size} resource(s) resolved.`,
+        ? `Layer 3: ${failures.length} of ${urlToPointer.size} resource(s) failed to resolve${duplicateNote}.`
+        : `Layer 3 passed - all ${urlToPointer.size} resource(s) resolved${duplicateNote}.`,
   };
 
   return [summary, ...failures];
