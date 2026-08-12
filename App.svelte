@@ -337,6 +337,7 @@
     <div class="help-popup" id="help-popup" role="tooltip">
       <ul>
         <li>Enter a manifest URL and click <strong>Load</strong>, or</li>
+        <li>Pick a .json file from your computer under <strong>Or load a JSON file</strong>, or</li>
         <li>Paste the manifest JSON directly into the box below.</li>
       </ul>
       <p>Then click <strong>Validate</strong> to check it.</p>
