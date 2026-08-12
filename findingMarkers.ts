@@ -11,10 +11,11 @@ import {
   type DecorationSet,
 } from "@codemirror/view";
 
-// a character range in the document to flag.
+// a character range in the document to flag, and how loudly to flag it.
 export type MarkerRange = {
   from: number;
   to: number;
+  severity: "error" | "warning";
 };
 
 // effect that carries a fresh set of ranges into the editor state. dispatching it
@@ -28,7 +29,10 @@ function nonEmptyRanges(ranges: readonly MarkerRange[]): MarkerRange[] {
 
 // --- inline underline decorations ---
 
-const errorMark = Decoration.mark({ class: "cm-finding-error" });
+const marksBySeverity = {
+  error: Decoration.mark({ class: "cm-finding-error" }),
+  warning: Decoration.mark({ class: "cm-finding-warning" }),
+};
 
 const underlineField = StateField.define<DecorationSet>({
   create() {
@@ -40,7 +44,7 @@ const underlineField = StateField.define<DecorationSet>({
     for (const effect of transaction.effects) {
       if (effect.is(setMarkers)) {
         const marks = nonEmptyRanges(effect.value).map((range) =>
-          errorMark.range(range.from, range.to),
+          marksBySeverity[range.severity].range(range.from, range.to),
         );
         // second argument sorts the marks, which Decoration.set requires.
         decorations = Decoration.set(marks, true);
@@ -53,16 +57,22 @@ const underlineField = StateField.define<DecorationSet>({
 
 // --- margin gutter dots ---
 
-class ErrorGutterMarker extends GutterMarker {
+class FindingGutterMarker extends GutterMarker {
+  constructor(private readonly severity: "error" | "warning") {
+    super();
+  }
   toDOM() {
     const dot = document.createElement("span");
-    dot.className = "cm-finding-gutter-dot";
+    dot.className = `cm-finding-gutter-dot cm-finding-gutter-dot-${this.severity}`;
     dot.textContent = "●"; // ● filled circle
     return dot;
   }
 }
 
-const errorGutterMarker = new ErrorGutterMarker();
+const gutterMarkersBySeverity = {
+  error: new FindingGutterMarker("error"),
+  warning: new FindingGutterMarker("warning"),
+};
 
 const gutterField = StateField.define<RangeSet<GutterMarker>>({
   create() {
@@ -73,17 +83,19 @@ const gutterField = StateField.define<RangeSet<GutterMarker>>({
     for (const effect of transaction.effects) {
       if (effect.is(setMarkers)) {
         const doc = transaction.state.doc;
-        // one dot per affected line, even if several errors share that line.
-        const seenLineStarts = new Set<number>();
-        const gutterMarks = [];
+        // one dot per affected line, even if several findings share that line; an error
+        // on the line outranks a warning, so the dot shows the worst of them.
+        const severityByLineStart = new Map<number, "error" | "warning">();
         for (const range of nonEmptyRanges(effect.value)) {
           const lineStart = doc.lineAt(range.from).from;
-          if (seenLineStarts.has(lineStart)) {
+          if (severityByLineStart.get(lineStart) === "error") {
             continue;
           }
-          seenLineStarts.add(lineStart);
-          gutterMarks.push(errorGutterMarker.range(lineStart));
+          severityByLineStart.set(lineStart, range.severity);
         }
+        const gutterMarks = [...severityByLineStart].map(([lineStart, severity]) =>
+          gutterMarkersBySeverity[severity].range(lineStart),
+        );
         markers = RangeSet.of(gutterMarks, true);
       }
     }
@@ -102,13 +114,22 @@ const markerTheme = EditorView.baseTheme({
   ".cm-finding-error": {
     textDecoration: "underline wavy var(--iiif-red)",
   },
+  // same amber as the report's warning rows.
+  ".cm-finding-warning": {
+    textDecoration: "underline wavy var(--iiif-amber)",
+  },
   ".cm-finding-gutter": {
     width: "1.2em",
   },
   ".cm-finding-gutter-dot": {
     display: "block",
     textAlign: "center",
+  },
+  ".cm-finding-gutter-dot-error": {
     color: "var(--iiif-red)",
+  },
+  ".cm-finding-gutter-dot-warning": {
+    color: "var(--iiif-amber)",
   },
 });
 

@@ -165,7 +165,11 @@
   // tree so callers with many findings parse the document once, not once per finding.
   // returns undefined when there is no node to point at (e.g. a stale pointer that no
   // longer matches the current text). shared by markers and click-to-jump so both agree.
-  function resolvePointerRange(tree: Node, pointer: string): MarkerRange | undefined {
+  // severity is not its business — the caller knows which finding asked, and adds it.
+  function resolvePointerRange(
+    tree: Node,
+    pointer: string,
+  ): Omit<MarkerRange, "severity"> | undefined {
     const node = findNodeAtLocation(tree, jsonPointerToPath(pointer));
     if (node === undefined) {
       return undefined;
@@ -189,17 +193,24 @@
     tree: Node,
     parseErrors: ParseError[],
   ): MarkerRange | undefined {
-    if (finding.severity !== "error") {
+    // "ok" findings are summaries, not locations; errors and warnings both point at
+    // something worth marking and jumping to.
+    if (finding.severity === "ok") {
       return undefined;
     }
     if (finding.pointer !== undefined) {
-      return resolvePointerRange(tree, finding.pointer);
+      const range = resolvePointerRange(tree, finding.pointer);
+      if (range === undefined) {
+        return undefined;
+      }
+      return { ...range, severity: finding.severity };
     }
     if (finding.layer === 1 && parseErrors.length > 0) {
       const firstError = parseErrors[0];
       return {
         from: firstError.offset,
         to: firstError.offset + Math.max(firstError.length, 1),
+        severity: finding.severity,
       };
     }
     return undefined;
@@ -227,7 +238,7 @@
   // pointer is "" (still jumpable — resolves to the opening brace), so test against
   // undefined; a Layer-1 syntax error has no pointer but is still jumpable.
   function isJumpable(finding: Finding): boolean {
-    return finding.severity === "error" && (finding.pointer !== undefined || finding.layer === 1);
+    return finding.severity !== "ok" && (finding.pointer !== undefined || finding.layer === 1);
   }
 
   // click a report entry → select and scroll to its node in the editor.
@@ -581,7 +592,7 @@
     color: var(--iiif-red);
   }
   .report-summary .warning {
-    color: #92400e;
+    color: var(--iiif-amber);
   }
   .report-summary .ok {
     color: var(--iiif-green);
@@ -721,7 +732,7 @@
   }
   .finding.warning {
     background: #fef3c7;
-    color: #92400e;
+    color: var(--iiif-amber);
   }
   /* jumpable entries are <button>s; strip the default button chrome (blue fill, Playfair,
      centered) so they read like the other findings — just clickable. the .finding.* rules
