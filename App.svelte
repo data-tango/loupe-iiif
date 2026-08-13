@@ -323,6 +323,10 @@
   function handleFileInputClick(event: Event) {
     (event.currentTarget as HTMLInputElement).value = "";
   }
+
+  // the running version, read from the manifest so there is one source of truth.
+  // undefined under `npm run dev`, where the page is served without an extension around it.
+  const version = chrome?.runtime?.getManifest().version;
 </script>
 
 {#snippet severityIcon(severity: Severity)}
@@ -431,6 +435,8 @@
         {/if}
       {/each}
     </div>
+
+    {#if version}<span class="version">v{version}</span>{/if}
   </div>
 </main>
 
@@ -546,6 +552,7 @@
     line-height: 1.5;
   }
   .panes {
+    position: relative;
     display: grid;
     grid-template-columns: 3fr 2fr;
     gap: 16px;
@@ -554,7 +561,9 @@
   .report {
     position: sticky;
     top: 16px;
-    max-height: 70vh;
+    /* stops short of the editor's full height so a long report scrolls internally
+       rather than running under the version label in the corner below it. */
+    max-height: calc(70vh - 20px);
     overflow: auto;
   }
   /* native <progress>, restyled: WebKit and Firefox expose different pseudo-elements,
@@ -754,5 +763,15 @@
   }
   button.finding.jumpable:hover {
     filter: brightness(0.96);
+  }
+  /* out of the grid flow, pinned to the corner of the panes row — the editor is the
+     tallest thing in that row, so this lands level with the editor's bottom edge and
+     flush with the right edge the Load button above shares. */
+  .version {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    font-size: 12px;
+    color: #767676; /* the lightest gray still at 4.5:1 on --iiif-bg */
   }
 </style>
