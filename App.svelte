@@ -327,6 +327,24 @@
   // the running version, read from the manifest so there is one source of truth.
   // undefined under `npm run dev`, where the page is served without an extension around it.
   const version = chrome?.runtime?.getManifest().version;
+
+  // background.js forwards the browser's "an update is waiting" event here. reloading
+  // discards whatever is in the editor, so the notice only offers it — dismissing leaves
+  // the update to apply at the next browser restart instead.
+  // background.js does the reloading, so it can note that this tab should be reopened on
+  // the new version. the send never gets a reply — the extension restarts under it — so
+  // the rejected promise is expected, not a failure.
+  function requestUpdateReload() {
+    chrome?.runtime?.sendMessage({ type: "reload-for-update" }).catch(() => {});
+  }
+
+  let pendingUpdateVersion = $state<string | undefined>(undefined);
+  chrome?.runtime?.onMessage.addListener((message) => {
+    const update = message as { type?: string; version?: string };
+    if (update?.type === "update-available") {
+      pendingUpdateVersion = update.version;
+    }
+  });
 </script>
 
 {#snippet severityIcon(severity: Severity)}
@@ -439,6 +457,19 @@
     {#if version}<span class="version">v{version}</span>{/if}
   </div>
 </main>
+
+{#if pendingUpdateVersion !== undefined}
+  <div class="update-popup" role="status">
+    <p>Version {pendingUpdateVersion} is available.</p>
+    <p class="update-note">Reloading closes this tab and clears the editor.</p>
+    <div class="update-actions">
+      <button onclick={requestUpdateReload}>Reload &amp; update</button>
+      <button class="update-later" onclick={() => (pendingUpdateVersion = undefined)}>
+        Later
+      </button>
+    </div>
+  </div>
+{/if}
 
 <style>
   header {
@@ -773,5 +804,46 @@
     bottom: 0;
     font-size: 12px;
     color: #767676; /* the lightest gray still at 4.5:1 on --iiif-bg */
+  }
+  /* sits over the page rather than in the flow: it appears at an arbitrary moment, and
+     shifting the layout under someone mid-edit would be worse than covering a corner. */
+  .update-popup {
+    position: fixed;
+    right: 24px;
+    /* clears the version label, which sits in this same corner (24px page padding
+       + its 15px line + a gap) rather than covering it. */
+    bottom: 52px;
+    z-index: 20;
+    width: 280px;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+    font-size: 14px;
+  }
+  .update-popup p {
+    margin: 0 0 4px;
+  }
+  .update-note {
+    font-size: 12px;
+    color: var(--iiif-gray);
+  }
+  .update-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .update-actions button {
+    padding: 6px 12px;
+    font-size: 13px;
+  }
+  .update-later {
+    background: none;
+    color: var(--iiif-gray);
+  }
+  .update-later:hover {
+    background: #eee;
+    color: var(--iiif-gray);
   }
 </style>

@@ -30,6 +30,7 @@
     }
   },
   "host_permissions": ["<all_urls>"],
+  "permissions": ["storage"],
   "{{firefox}}.browser_specific_settings": {
     "gecko": {
       "id": "loupe@datatango.dev",
