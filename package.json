@@ -1,6 +1,6 @@
 {
   "name": "loupe-iiif",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "",
   "main": "background.js",
   "scripts": {
@@ -12,6 +12,7 @@
     "build:firefox": "TARGET=firefox npm run build",
     "package": "npm run build && cd dist-chrome && zip -r ../loupe-chrome-$npm_package_version.zip . -x '*.DS_Store'",
     "package:firefox": "npm run build:firefox && cd dist-firefox && zip -r ../loupe-firefox-$npm_package_version.zip . -x '*.DS_Store'",
+    "package:source": "git archive --format=zip -o loupe-source-$npm_package_version.zip HEAD",
     "build:icons": "for s in 16 32 48 64 96 128 256; do vips thumbnail public/icons/icon.svg public/icons/icon$s.png $s --height $s; done",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "pretest": "npm run build:validator",
