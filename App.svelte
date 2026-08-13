@@ -549,23 +549,30 @@
     border-radius: 8px;
     box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
   }
-  /* speech-bubble pointer: a small rotated square poking up toward the button. */
-  .help-popup::after {
+  /* speech-bubble pointer: a small rotated square poking up toward the button. it hangs
+     off the icon's own box rather than the popup's, so "centered on the icon" is what the
+     CSS says (left: 50% of .help, which is exactly the icon) instead of an offset
+     measured from the popup's right edge that only holds while the icon is 24px wide. */
+  .help::after {
     content: "";
+    display: none;
     position: absolute;
-    top: -7px;
-    /* arrow center at 12px from the right edge = the center of the 24px icon above */
-    right: 6px;
+    /* the popup's top edge is at 100%; straddle it, same as the old -7px did */
+    top: calc(100% - 7px);
+    left: 50%;
+    z-index: 11; /* over the popup, so the white fill hides the border line behind it */
     width: 12px;
     height: 12px;
     background: #fff;
     border-left: 1px solid #ddd;
     border-top: 1px solid #ddd;
-    transform: rotate(45deg);
+    transform: translateX(-50%) rotate(45deg);
   }
   /* keep it open while hovering the button or the popup, and for keyboard focus. */
   .help:hover .help-popup,
-  .help:focus-within .help-popup {
+  .help:focus-within .help-popup,
+  .help:hover::after,
+  .help:focus-within::after {
     display: block;
   }
   .help-popup ul {
