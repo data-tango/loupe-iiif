@@ -19,5 +19,8 @@ manifest-validator-v4.js
 loupe-*.zip
 loupe-source-*.zip
 
-# local-only media (README embeds video via GitHub's user-attachments CDN, not this file)
+# local-only media. the README embeds its demo from GitHub's user-attachments CDN, and
+# the store screenshots live in the store dashboards, so neither needs to be in the repo -
+# they only bulk up every clone and the source zip AMO asks for.
 assets/loupe-iiif_demo.mp4
+assets/screenshot.png
