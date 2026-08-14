@@ -1,6 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="10 10 110 110">
-  <!-- loupe lens containing the official IIIF logo, inlined as vector paths from
-       assets/iiif.svg (400x400) and scaled into the 52-unit lens box -->
+  <!-- loupe lens containing the official IIIF logo, inlined as vector paths from the
+       400x400 iiif.svg and scaled into the 52-unit lens box. this file is the source
+       artwork as well as the shipped favicon - npm run build:icons rasterizes the PNGs
+       beside it from here. -->
   <defs>
     <!-- clip at the ring's centerline (r=34): ink between the lens interior (r=28)
          and the clip is hidden under the opaque ring, so the logo can run right up

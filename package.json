@@ -12,7 +12,7 @@
     "build:firefox": "TARGET=firefox npm run build",
     "package": "npm run build && cd dist-chrome && zip -r ../loupe-chrome-$npm_package_version.zip . -x '*.DS_Store'",
     "package:firefox": "npm run build:firefox && cd dist-firefox && zip -r ../loupe-firefox-$npm_package_version.zip . -x '*.DS_Store'",
-    "build:icons": "for s in 16 32 48 64 96 128 256; do vips thumbnail assets/icon.svg public/icons/icon$s.png $s --height $s; done",
+    "build:icons": "for s in 16 32 48 64 96 128 256; do vips thumbnail public/icons/icon.svg public/icons/icon$s.png $s --height $s; done",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "pretest": "npm run build:validator",
     "test": "vitest run"
