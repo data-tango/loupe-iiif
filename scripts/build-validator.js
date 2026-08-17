@@ -16,7 +16,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 // load the schemas (the rules) as plain objects, one per supported IIIF Presentation
 // API version. add a new entry here (and a matching .schema.json) to support a version.
 //
-// iiif-presentation-3.schema.json is the official schema from the IIIF-run
+// schemas/presentation-3.schema.json is the official schema from the IIIF-run
 // presentation-validator project (the same one behind
 // https://presentation-validator.iiif.io/), not hand-rolled. its root schema validates
 // any IIIF Presentation resource (Manifest, Collection, Range, ...) via a five-way
@@ -28,7 +28,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 // validation keywords in draft-07, but types/classes are plain data, not validation
 // keywords, so they still resolve normally.)
 const schemaV3Source = JSON.parse(
-  readFileSync("iiif-presentation-3.schema.json", "utf8"),
+  readFileSync("schemas/presentation-3.schema.json", "utf8"),
 );
 const schemaV3 = {
   ...schemaV3Source,
@@ -37,7 +37,7 @@ const schemaV3 = {
 };
 delete schemaV3.oneOf;
 const schemaV2 = JSON.parse(
-  readFileSync("iiif-presentation-2.schema.json", "utf8"),
+  readFileSync("schemas/presentation-2.schema.json", "utf8"),
 );
 
 // allErrors: report every problem, not just the first.
@@ -79,7 +79,7 @@ console.log("Wrote manifest-validator.js");
 // file below) rather than merged into the draft-07 ajv above: standalone code
 // generation names its internal variables per Ajv instance (schema11, validate10, ...),
 // and two independently generated blobs sharing one file risk colliding on those names.
-const schemaV4Directory = "iiif-presentation-4-schema";
+const schemaV4Directory = "schemas/presentation-4";
 const ajv2020 = new Ajv2020({ allErrors: true, code: { source: true }, strict: false });
 addFormats(ajv2020);
 for (const fileName of readdirSync(schemaV4Directory)) {

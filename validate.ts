@@ -132,7 +132,7 @@ const presentationVersions: Record<
 
 // Presentation 4 is still a draft upstream (this schema tracks the presentation-validator
 // project's current snapshot of it, not a finalized spec) - its shape may still change
-// before it's finalized, which could require updating iiif-presentation-4-schema/.
+// before it's finalized, which could require updating schemas/presentation-4/.
 const presentation4ContextUri = "http://iiif.io/api/presentation/4/context.json";
 const presentation3ContextUri = "http://iiif.io/api/presentation/3/context.json";
 // Presentation 2 and the legacy Shared Canvas context it grew out of are structurally
