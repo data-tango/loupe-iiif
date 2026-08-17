@@ -5,9 +5,9 @@
   import { EditorView, basicSetup } from "codemirror";
   import { EditorState } from "@codemirror/state";
   import { json } from "@codemirror/lang-json";
-  import { parseTree, findNodeAtLocation, type Node, type ParseError } from "jsonc-parser";
   import { validate, validateLinks, type Finding, type Severity } from "./validate";
-  import { findingMarkers, setMarkers, type MarkerRange } from "./findingMarkers";
+  import { findingMarkers, setMarkers } from "./findingMarkers";
+  import { computeMarkerRanges, findingRange, isJumpable } from "./findingLocations";
 
   let manifestText = $state("");
   let urlText = $state("");
@@ -159,99 +159,12 @@
     }
   }
 
-  // resolve a finding's JSON Pointer to a source range — the bridge between "where the
-  // spec says the problem is" (a pointer) and "where that is in the text" (an offset),
-  // using the positions jsonc-parser retains but JSON.parse drops. takes an already-parsed
-  // tree so callers with many findings parse the document once, not once per finding.
-  // returns undefined when there is no node to point at (e.g. a stale pointer that no
-  // longer matches the current text). shared by markers and click-to-jump so both agree.
-  // severity is not its business — the caller knows which finding asked, and adds it.
-  function resolvePointerRange(
-    tree: Node,
-    pointer: string,
-  ): Omit<MarkerRange, "severity"> | undefined {
-    const node = findNodeAtLocation(tree, jsonPointerToPath(pointer));
-    if (node === undefined) {
-      return undefined;
-    }
-    // an empty pointer resolves to the whole root node (a missing required property, or a
-    // wrong-typed root). underlining the entire document would be noise, so mark just its
-    // opening brace/bracket — enough to see, and to jump to.
-    if (pointer === "") {
-      return { from: node.offset, to: node.offset + 1 };
-    }
-    return { from: node.offset, to: node.offset + node.length };
-  }
-
-  // resolve a finding to a source range, whichever way it locates itself: Layer-2+
-  // errors carry a pointer (possibly "" for root errors) into the successfully-parsed
-  // document; a Layer-1 syntax error has no pointer (the document never parsed into
-  // JSON), so it points at wherever jsonc-parser's tolerant parser first choked.
-  // shared by markers and click-to-jump so both agree on where a finding lives.
-  function resolveFindingRange(
-    finding: Finding,
-    tree: Node,
-    parseErrors: ParseError[],
-  ): MarkerRange | undefined {
-    // "ok" findings are summaries, not locations; errors and warnings both point at
-    // something worth marking and jumping to.
-    if (finding.severity === "ok") {
-      return undefined;
-    }
-    if (finding.pointer !== undefined) {
-      const range = resolvePointerRange(tree, finding.pointer);
-      if (range === undefined) {
-        return undefined;
-      }
-      return { ...range, severity: finding.severity };
-    }
-    if (finding.layer === 1 && parseErrors.length > 0) {
-      const firstError = parseErrors[0];
-      return {
-        from: firstError.offset,
-        to: firstError.offset + Math.max(firstError.length, 1),
-        severity: finding.severity,
-      };
-    }
-    return undefined;
-  }
-
-  function computeMarkerRanges(findings: Finding[], text: string): MarkerRange[] {
-    // jsonc-parser is fault-tolerant, so even text that fails JSON.parse (a Layer-1
-    // error) still yields a tree plus a list of the syntax errors it stumbled over.
-    const parseErrors: ParseError[] = [];
-    const tree = parseTree(text, parseErrors);
-    if (tree === undefined) {
-      return [];
-    }
-    const ranges: MarkerRange[] = [];
-    for (const finding of findings) {
-      const range = resolveFindingRange(finding, tree, parseErrors);
-      if (range !== undefined) {
-        ranges.push(range);
-      }
-    }
-    return ranges;
-  }
-
-  // whether a report entry can jump to a node (same test the markers use). a root error's
-  // pointer is "" (still jumpable — resolves to the opening brace), so test against
-  // undefined; a Layer-1 syntax error has no pointer but is still jumpable.
-  function isJumpable(finding: Finding): boolean {
-    return finding.severity !== "ok" && (finding.pointer !== undefined || finding.layer === 1);
-  }
-
   // click a report entry → select and scroll to its node in the editor.
   function jumpToFinding(finding: Finding) {
     if (editorView === undefined) {
       return;
     }
-    const parseErrors: ParseError[] = [];
-    const tree = parseTree(manifestText, parseErrors);
-    if (tree === undefined) {
-      return;
-    }
-    const range = resolveFindingRange(finding, tree, parseErrors);
+    const range = findingRange(finding, manifestText);
     if (range === undefined) {
       return;
     }
@@ -260,16 +173,6 @@
       scrollIntoView: true,
     });
     editorView.focus();
-  }
-
-  // JSON Pointer "/items/0/type" → ["items", 0, "type"]. array indices must be numbers
-  // so jsonc-parser matches them; "~1"/"~0" are the pointer escapes for "/" and "~".
-  function jsonPointerToPath(pointer: string): (string | number)[] {
-    return pointer
-      .split("/")
-      .slice(1)
-      .map((segment) => segment.replace(/~1/g, "/").replace(/~0/g, "~"))
-      .map((segment) => (/^\d+$/.test(segment) ? Number(segment) : segment));
   }
 
   async function handleLoadUrl() {

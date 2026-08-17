@@ -29,6 +29,8 @@
     "validate.ts",
     "validate.test.ts",
     "findingMarkers.ts",
+    "findingLocations.ts",
+    "findingLocations.test.ts",
     "manifest-validator.d.ts",
     "chrome.d.ts"
   ]
