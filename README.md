@@ -25,7 +25,7 @@ The extension has four layers of checks.
 
 ## Install
 
-- **Chrome:** [Chrome Web Store](https://chromewebstore.google.com/detail/loupe-iiif/bnnoohiohbljoianldgbnepljodndmdo)
+- **Chrome:** [Chrome Web Store](https://chromewebstore.google.com/detail/loupe-iiif/bnnoohiohbljoianldgbnepljodndmdo) - also works in Chromium browsers (Brave, Edge, Vivaldi)
 - **Firefox:** [Firefox Add-ons](https://addons.mozilla.org/en-US/firefox/addon/loupe-iiif/)
 
 ## Install (from source)
