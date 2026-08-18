@@ -204,6 +204,15 @@ describe("layer 2 - IIIF structure", () => {
     expect(rightsErrors[0].message).toContain('Use "http://creativecommons.org/publicdomain/mark/1.0/".');
   });
 
+  test("a failure Ajv reports twice becomes one finding", () => {
+    // label is checked against the shared lngString definition from two branches of the
+    // schema's allOf, so Ajv emits the identical error twice for a non-language-map label.
+    const manifest = { ...cleanManifest(), label: "Not a language map" };
+    const findings = validate(JSON.stringify(manifest));
+    const labelErrors = errors(findings).filter((finding) => finding.pointer === "/label");
+    expect(labelErrors).toHaveLength(1);
+  });
+
   test("an https RightsStatements.org URI gets the same specific message", () => {
     const manifest = {
       ...cleanManifest(),
